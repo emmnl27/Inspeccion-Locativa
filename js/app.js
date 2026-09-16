@@ -467,7 +467,7 @@ async function saveRecordToStorage(rec){
   const key = 'record:' + rec.id;
   await storage.set(key, JSON.stringify(rec));
 }
-async function listRecords(){
+async function listAllRecords(){
   try{
     const res = await storage.list('record:');
     if(!res || !res.keys) return [];
@@ -482,43 +482,57 @@ async function listRecords(){
     return recs;
   }catch(e){ return []; }
 }
+async function listRecords(){
+  const all = await listAllRecords();
+  return all.filter(r=> !r.deletedAt);
+}
 async function deleteRecord(id){
   try{
     const r = await storage.get('record:'+id);
     if(r && r.value){
       let rec = r.value;
       if(typeof rec === 'string'){ try{ rec = JSON.parse(rec); }catch(e){} }
-      const backup = (rec && typeof rec === 'object') ? Object.assign({}, rec, { deletedAt: Date.now() }) : { id, deletedAt: Date.now() };
-      await storage.set('deleted_record:'+id, JSON.stringify(backup));
+      if(rec && typeof rec === 'object'){
+        rec.deletedAt = Date.now();
+        await saveRecordToStorage(rec);
+        return;
+      }
     }
-    await storage.delete('record:'+id);
   }catch(e){}
 }
 async function listDeletedRecords(){
-  try{
-    const res = await storage.list('deleted_record:');
-    if(!res || !res.keys) return [];
-    const recs = [];
-    for(const k of res.keys){
-      try{
-        const r = await storage.get(k);
-        if(r && r.value) recs.push(JSON.parse(r.value));
-      }catch(e){}
-    }
-    recs.sort((a,b)=> (b.deletedAt||0) - (a.deletedAt||0));
-    return recs;
-  }catch(e){ return []; }
+  const all = await listAllRecords();
+  return all.filter(r=> r.deletedAt).sort((a,b)=> (b.deletedAt||0) - (a.deletedAt||0));
 }
 async function restoreDeletedRecord(id){
   try{
-    const r = await storage.get('deleted_record:'+id);
+    const r = await storage.get('record:'+id);
     if(!r || !r.value) return false;
     const rec = JSON.parse(r.value);
+    if(!rec.deletedAt) return false;
     delete rec.deletedAt;
     await saveRecordToStorage(rec);
-    await storage.delete('deleted_record:'+id);
     return true;
   }catch(e){ return false; }
+}
+async function migrateLegacyDeleted(){
+  try{
+    const res = await storage.list('deleted_record:');
+    if(!res || !res.keys || !res.keys.length) return;
+    for(const k of res.keys){
+      try{
+        const r = await storage.get(k);
+        if(r && r.value){
+          const rec = JSON.parse(r.value);
+          if(rec && typeof rec === 'object'){
+            if(!rec.deletedAt) rec.deletedAt = Date.now();
+            await saveRecordToStorage(rec);
+          }
+        }
+        await storage.delete(k);
+      }catch(e){}
+    }
+  }catch(e){}
 }
 
 function formatTime(v){
@@ -568,7 +582,7 @@ async function loadDraft(){
 
 function exportBackup(){
   Promise.all([listRecords(), listDeletedRecords()]).then(([recs, deleted])=>{
-    const data = { app:'inspeccion_locativa', version:1, exportedAt: Date.now(), records: recs, deletedRecords: deleted };
+    const data = { app:'inspeccion_locativa', version:2, exportedAt: Date.now(), records: recs, deletedRecords: deleted };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -577,7 +591,8 @@ function exportBackup(){
     a.click();
     a.remove();
     URL.revokeObjectURL(a.href);
-    showToast(recs.length ? `Respaldo con ${recs.length} registros exportado` : 'No hay registros para respaldar');
+    const total = recs.length + deleted.length;
+    showToast(total ? `Respaldo con ${total} registros (${deleted.length} eliminados) exportado` : 'No hay registros para respaldar');
   });
 }
 function importBackup(){
@@ -593,7 +608,13 @@ function importBackup(){
       let n = 0;
       for(const r of data.records){
         if(r && r.id){
-          await saveRecordToStorage({ id: r.id, header: r.header||{}, values: r.values||{}, anexos: r.anexos||[], savedAt: r.savedAt || Date.now(), updatedAt: r.updatedAt || Date.now() });
+          await saveRecordToStorage(Object.assign({}, r, {
+            header: (r.header && typeof r.header === 'object') ? r.header : {},
+            values: (r.values && typeof r.values === 'object') ? r.values : {},
+            anexos: Array.isArray(r.anexos) ? r.anexos : [],
+            savedAt: r.savedAt || Date.now(),
+            updatedAt: r.updatedAt || Date.now()
+          }));
           n++;
         }
       }
@@ -601,7 +622,15 @@ function importBackup(){
       const deletedArr = Array.isArray(data.deletedRecords) ? data.deletedRecords : [];
       for(const r of deletedArr){
         if(r && r.id){
-          await storage.set('deleted_record:'+r.id, JSON.stringify(r));
+          const rec = Object.assign({}, r, {
+            header: (r.header && typeof r.header === 'object') ? r.header : {},
+            values: (r.values && typeof r.values === 'object') ? r.values : {},
+            anexos: Array.isArray(r.anexos) ? r.anexos : [],
+            savedAt: r.savedAt || Date.now(),
+            updatedAt: r.updatedAt || Date.now()
+          });
+          if(!rec.deletedAt) rec.deletedAt = Date.now();
+          await saveRecordToStorage(rec);
           dn++;
         }
       }
@@ -1541,6 +1570,7 @@ if(histSearchEl){
 }
 
 (async function init(){
+  await migrateLegacyDeleted();
   await loadConfig();
   const restored = await loadDraft();
   if(!restored) resetRecord();
