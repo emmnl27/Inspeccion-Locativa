@@ -106,6 +106,8 @@ let config = {
   headerDefaults: { empresa: '' },
   headerLabels: {},
   headerOrder: [],
+  customHeaderFields: [],
+  headerRemoved: [],
   items: Object.fromEntries(SECTIONS.flatMap(s=>s.items.map(i=>[i.id,true]))),
   customItems: {},
   itemsLabels: {},
@@ -119,9 +121,72 @@ let config = {
 function orderedHeaderFields(){
   const order = Array.isArray(config.headerOrder) ? config.headerOrder : [];
   const out = [];
-  order.forEach(id=>{ const f = HEADER_FIELDS.find(x=>x.id===id); if(f && !out.includes(f)) out.push(f); });
-  HEADER_FIELDS.forEach(f=>{ if(!out.includes(f)) out.push(f); });
+  order.forEach(id=>{ const f = headerFieldById(id); if(f && !out.includes(f)) out.push(f); });
+  allHeaderFields().forEach(f=>{ if(!out.includes(f)) out.push(f); });
   return out;
+}
+function customHeaderFields(){
+  config.customHeaderFields = Array.isArray(config.customHeaderFields) ? config.customHeaderFields : [];
+  return config.customHeaderFields;
+}
+function isCustomHeaderField(id){
+  return customHeaderFields().some(f=>f.id===id);
+}
+function isHeaderRemoved(id){
+  return Array.isArray(config.headerRemoved) && config.headerRemoved.some(r=>r.id===id);
+}
+function headerFieldById(id){
+  if(isHeaderRemoved(id)) return null;
+  const d = HEADER_FIELDS.find(f=>f.id===id);
+  if(d) return d;
+  return customHeaderFields().find(f=>f.id===id) || null;
+}
+function allHeaderFields(){
+  const out = HEADER_FIELDS.filter(f=>!isHeaderRemoved(f.id));
+  customHeaderFields().forEach(f=>{ if(!out.some(x=>x.id===f.id)) out.push(f); });
+  return out;
+}
+function newHeaderFieldId(){
+  return 'hf' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+function addCustomHeaderField(label, type, full){
+  const t = (label||'').trim();
+  if(!t) return null;
+  const f = { id:newHeaderFieldId(), label:t, type:(type==='date'||type==='time')?type:'text', full:!!full };
+  customHeaderFields().push(f);
+  config.header[f.id] = true;
+  configDirty = true;
+  return f;
+}
+function deleteHeaderField(id){
+  const f = headerFieldById(id);
+  if(!f) return;
+  config.headerRemoved = Array.isArray(config.headerRemoved) ? config.headerRemoved : [];
+  if(!config.headerRemoved.some(r=>r.id===id)){
+    config.headerRemoved.push({ id:f.id, label:fieldTitle(f), type:f.type||'text', full:!!f.full, custom:isCustomHeaderField(id) });
+  }
+  config.header[id] = false;
+  if(isCustomHeaderField(id)){
+    config.customHeaderFields = customHeaderFields().filter(x=>x.id!==id);
+  }
+  if(Array.isArray(config.headerOrder)) config.headerOrder = config.headerOrder.filter(x=>x!==id);
+  configDirty = true;
+}
+function restoreHeaderField(id){
+  const arr = Array.isArray(config.headerRemoved) ? config.headerRemoved : [];
+  const idx = arr.findIndex(r=>r.id===id);
+  if(idx<0) return;
+  const r = arr[idx];
+  if(r.custom){
+    customHeaderFields().push({ id:r.id, label:r.label, type:r.type||'text', full:!!r.full });
+  }else{
+    config.headerLabels = config.headerLabels || {};
+    const def = HEADER_FIELDS.find(f=>f.id===id);
+    if(def && r.label && r.label!==def.label) config.headerLabels[id] = r.label;
+  }
+  arr.splice(idx,1);
+  config.header[id] = true;
+  configDirty = true;
 }
 function fieldTitle(f){
   const custom = config.headerLabels && config.headerLabels[f.id];
@@ -302,7 +367,7 @@ function defaultValueFor(field){
 
 function resetRecord(){
   record = { header:{}, values:{}, savedAt:null, anexos:[] };
-  HEADER_FIELDS.forEach(f=> record.header[f.id] = defaultValueFor(f));
+  allHeaderFields().forEach(f=> record.header[f.id] = defaultValueFor(f));
   allItemIds().forEach(id=> record.values[id] = {answer:'', obs:''});
   editId = null;
   recordDirty = false;
@@ -378,7 +443,9 @@ async function loadConfig(){
       config.header = Object.assign(config.header, saved.header||{});
       config.headerDefaults = Object.assign({}, config.headerDefaults, saved.headerDefaults||{});
       config.headerLabels = Object.assign({}, config.headerLabels, saved.headerLabels||{});
-      config.headerOrder = Array.isArray(saved.headerOrder) ? saved.headerOrder.filter(id=>HEADER_FIELDS.some(f=>f.id===id)) : config.headerOrder;
+      config.customHeaderFields = Array.isArray(saved.customHeaderFields) ? saved.customHeaderFields.map(f=>({id:f.id, label:f.label, type:f.type||'text', full:!!f.full})) : config.customHeaderFields;
+      config.headerRemoved = Array.isArray(saved.headerRemoved) ? saved.headerRemoved : config.headerRemoved;
+      config.headerOrder = Array.isArray(saved.headerOrder) ? saved.headerOrder.filter(id=>allHeaderFields().some(f=>f.id===id)) : config.headerOrder;
       config.items = Object.assign(config.items, saved.items||{});
       config.customItems = Object.assign(config.customItems, saved.customItems||{});
       config.itemsLabels = Object.assign(config.itemsLabels, saved.itemsLabels||{});
@@ -416,7 +483,42 @@ async function listRecords(){
   }catch(e){ return []; }
 }
 async function deleteRecord(id){
-  try{ await storage.delete('record:'+id); }catch(e){}
+  try{
+    const r = await storage.get('record:'+id);
+    if(r && r.value){
+      let rec = r.value;
+      if(typeof rec === 'string'){ try{ rec = JSON.parse(rec); }catch(e){} }
+      const backup = (rec && typeof rec === 'object') ? Object.assign({}, rec, { deletedAt: Date.now() }) : { id, deletedAt: Date.now() };
+      await storage.set('deleted_record:'+id, JSON.stringify(backup));
+    }
+    await storage.delete('record:'+id);
+  }catch(e){}
+}
+async function listDeletedRecords(){
+  try{
+    const res = await storage.list('deleted_record:');
+    if(!res || !res.keys) return [];
+    const recs = [];
+    for(const k of res.keys){
+      try{
+        const r = await storage.get(k);
+        if(r && r.value) recs.push(JSON.parse(r.value));
+      }catch(e){}
+    }
+    recs.sort((a,b)=> (b.deletedAt||0) - (a.deletedAt||0));
+    return recs;
+  }catch(e){ return []; }
+}
+async function restoreDeletedRecord(id){
+  try{
+    const r = await storage.get('deleted_record:'+id);
+    if(!r || !r.value) return false;
+    const rec = JSON.parse(r.value);
+    delete rec.deletedAt;
+    await saveRecordToStorage(rec);
+    await storage.delete('deleted_record:'+id);
+    return true;
+  }catch(e){ return false; }
 }
 
 function formatTime(v){
@@ -428,7 +530,7 @@ function formatTime(v){
 
 function loadRecordIntoForm(rec){
   record = { header:{}, values:{}, savedAt: rec.savedAt || Date.now(), anexos: Array.isArray(rec.anexos) ? rec.anexos : [] };
-  HEADER_FIELDS.forEach(f=> record.header[f.id] = (rec.header && rec.header[f.id] !== undefined) ? rec.header[f.id] : defaultValueFor(f));
+  allHeaderFields().forEach(f=> record.header[f.id] = (rec.header && rec.header[f.id] !== undefined) ? rec.header[f.id] : defaultValueFor(f));
   allItemIds().forEach(id=> record.values[id] = (rec.values && rec.values[id]) ? {answer:rec.values[id].answer||'', obs:rec.values[id].obs||''} : {answer:'', obs:''});
   editId = rec.id;
   recordDirty = false;
@@ -451,7 +553,7 @@ async function loadDraft(){
     if(!res || !res.value) return false;
     const d = JSON.parse(res.value);
     if(!d || typeof d.values !== 'object') return false;
-    record.header = Object.fromEntries(HEADER_FIELDS.map(f=>[f.id, defaultValueFor(f)]));
+    record.header = Object.fromEntries(allHeaderFields().map(f=>[f.id, defaultValueFor(f)]));
     Object.assign(record.header, d.header||{});
     record.values = {};
     allItemIds().forEach(id=> record.values[id] = (d.values[id]) ? {answer:d.values[id].answer||'', obs:d.values[id].obs||''} : {answer:'', obs:''});
@@ -465,8 +567,8 @@ async function loadDraft(){
 }
 
 function exportBackup(){
-  listRecords().then(recs=>{
-    const data = { app:'inspeccion_locativa', version:1, exportedAt: Date.now(), records: recs };
+  Promise.all([listRecords(), listDeletedRecords()]).then(([recs, deleted])=>{
+    const data = { app:'inspeccion_locativa', version:1, exportedAt: Date.now(), records: recs, deletedRecords: deleted };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -495,7 +597,15 @@ function importBackup(){
           n++;
         }
       }
-      showToast(n ? `${n} registros importados` : 'El archivo no contiene registros');
+      let dn = 0;
+      const deletedArr = Array.isArray(data.deletedRecords) ? data.deletedRecords : [];
+      for(const r of deletedArr){
+        if(r && r.id){
+          await storage.set('deleted_record:'+r.id, JSON.stringify(r));
+          dn++;
+        }
+      }
+      showToast(n || dn ? `Importados: ${n} registros, ${dn} en respaldo` : 'El archivo no contiene registros');
       renderHistorial();
     }catch(e){
       showToast('Archivo de respaldo inválido');
@@ -787,6 +897,7 @@ function updateSectionProgressFor(itemId){
 function renderHeaderConfig(){
   const box = document.getElementById('header-config');
   const fields = orderedHeaderFields();
+  const removed = Array.isArray(config.headerRemoved) ? config.headerRemoved : [];
   box.innerHTML = fields.map((f,i)=>{
     const isDateOrTime = f.id==='fecha' || f.id==='hora' || f.type==='date' || f.type==='time';
     const inputType = f.type==='date' ? 'date' : f.type==='time' ? 'time' : 'text';
@@ -803,9 +914,24 @@ function renderHeaderConfig(){
         <button type="button" class="cfg-move-btn" data-move="${f.id}" data-dir="up" title="Mover hacia arriba" aria-label="Mover hacia arriba" ${i===0?'disabled':''}>▲</button>
         <button type="button" class="cfg-move-btn" data-move="${f.id}" data-dir="down" title="Mover hacia abajo" aria-label="Mover hacia abajo" ${i===fields.length-1?'disabled':''}>▼</button>
       </div>
+      <button type="button" class="cfg-del-btn" data-hdel="${f.id}" title="Eliminar campo del encabezado (lo conservamos en el respaldo)" aria-label="Eliminar campo del encabezado">✕</button>
     </div>`;
-  }).join('');
-  box.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+  }).join('')
+  + `<div class="cfg-add">
+      <input class="add-hdr-label" type="text" placeholder="Nuevo campo del encabezado (ej. Cargo del inspector)…" data-hadd="1">
+      <select class="add-hdr-type" aria-label="Tipo de campo del encabezado">
+        <option value="text">Texto</option>
+        <option value="date">Fecha</option>
+        <option value="time">Hora</option>
+      </select>
+      <label class="add-hdr-full"><input type="checkbox" class="add-hdr-full-cb" checked> Ancho completo</label>
+      <button type="button" class="btn btn-primary btn-add-hdr" data-haddbtn="1">Agregar</button>
+    </div>`
+  + (removed.length ? `<div class="cfg-restore">
+      <div class="cfg-restore-title">Campos de encabezado eliminados (respaldo):</div>
+      ${removed.map(r=>`<div class="cfg-restore-row"><span>${escapeHtml(r.label)}</span><span class="cfg-restore-type">${r.type==='date'?'Fecha':r.type==='time'?'Hora':'Texto'}</span><button type="button" class="cfg-restore-btn" data-hrestore="${r.id}">↩ Restaurar</button></div>`).join('')}
+    </div>` : '');
+  box.querySelectorAll('input[type=checkbox][data-hcfg]').forEach(cb=>{
     cb.addEventListener('change', e=>{
       config.header[e.target.dataset.hcfg] = e.target.checked;
       configDirty = true;
@@ -826,6 +952,46 @@ function renderHeaderConfig(){
   box.querySelectorAll('.cfg-move-btn').forEach(btn=>{
     btn.addEventListener('click', e=>{
       moveHeaderField(e.target.dataset.move, e.target.dataset.dir);
+    });
+  });
+  box.querySelectorAll('.cfg-del-btn[data-hdel]').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      const id = e.target.dataset.hdel;
+      const f = headerFieldById(id);
+      const t = f ? fieldTitle(f) : id;
+      if(!confirm('¿Eliminar el campo "'+t+'" del encabezado?\nNo se borrará definitivamente: podrás recuperarlo en el respaldo.')) return;
+      deleteHeaderField(id);
+      renderHeaderConfig();
+      showToast('Campo "'+t+'" movido al respaldo');
+    });
+  });
+  box.querySelectorAll('.cfg-restore-btn[data-hrestore]').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      restoreHeaderField(e.target.dataset.hrestore);
+      renderHeaderConfig();
+      showToast('Campo restaurado');
+    });
+  });
+  box.querySelectorAll('.btn-add-hdr').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const inp = box.querySelector('.add-hdr-label');
+      const sel = box.querySelector('.add-hdr-type');
+      const fullCb = box.querySelector('.add-hdr-full-cb');
+      if(!(inp.value||'').trim()){ inp.focus(); return; }
+      addCustomHeaderField(inp.value, sel.value, fullCb.checked);
+      renderHeaderConfig();
+      showToast('Campo agregado al encabezado');
+    });
+  });
+  box.querySelectorAll('.add-hdr-label').forEach(inp=>{
+    inp.addEventListener('keydown', e=>{
+      if(e.key!=='Enter') return;
+      e.preventDefault();
+      const sel = box.querySelector('.add-hdr-type');
+      const fullCb = box.querySelector('.add-hdr-full-cb');
+      if(!(e.target.value||'').trim()) return;
+      addCustomHeaderField(e.target.value, sel.value, fullCb.checked);
+      renderHeaderConfig();
     });
   });
 }
@@ -1056,42 +1222,77 @@ async function renderHistorial(){
     const hay = [rec.header?rec.header.empresa:'', rec.header?rec.header.fecha:'', rec.header?rec.header.inspector:'', rec.header?rec.header.direccion:'', rec.header?rec.header.responsable:''].join(' ').toLowerCase();
     return hay.includes(q);
   }) : recs;
+  box.innerHTML = '';
   if(filtered.length===0){
-    box.innerHTML = '<div class="card"><div class="empty-state"><h3>'+ (q ? 'Sin resultados para "'+escapeHtml(histQuery)+'"' : 'Aún no hay registros guardados') +'</h3><p>'+ (q ? 'Prueba con otro término de búsqueda.' : 'Completa un formulario en "Nuevo registro" y presiona "Guardar registro".') +'</p></div></div>';
+    const emptyCard = document.createElement('div');
+    emptyCard.className = 'card';
+    emptyCard.innerHTML = '<div class="empty-state"><h3>'+ (q ? 'Sin resultados para "'+escapeHtml(histQuery)+'"' : 'Aún no hay registros guardados') +'</h3><p>'+ (q ? 'Prueba con otro término de búsqueda.' : 'Completa un formulario en "Nuevo registro" y presiona "Guardar registro".') +'</p></div>';
+    box.appendChild(emptyCard);
+  }else{
+    filtered.forEach(rec=>{
+      const card = document.createElement('div');
+      card.className = 'card rec-card';
+      const empresa = (rec.header && rec.header.empresa) || 'Sin nombre de empresa';
+      const fecha = (rec.header && rec.header.fecha) || '—';
+      card.innerHTML = `
+        <div class="rec-info">
+          <h4>${escapeHtml(empresa)}</h4>
+          <p>Fecha: ${fecha} · Actualizado ${new Date(rec.updatedAt||rec.savedAt).toLocaleString('es-CO')}</p>
+        </div>
+        <div class="rec-actions">
+          <button class="btn" data-load="${rec.id}">Abrir</button>
+          <button class="btn btn-primary" data-export="${rec.id}">PDF</button>
+          <button class="btn btn-danger" data-del="${rec.id}">Eliminar</button>
+        </div>
+      `;
+      box.appendChild(card);
+      card.querySelector('[data-load]').addEventListener('click', ()=>{
+        loadRecordIntoForm(rec);
+        switchView('nuevo');
+        showToast('Registro cargado');
+      });
+      card.querySelector('[data-export]').addEventListener('click', ()=> exportRecordToPDF(rec));
+      card.querySelector('[data-del]').addEventListener('click', async ()=>{
+        if(!confirm('¿Eliminar este registro del historial?\nNo se borrará definitivamente: podrás restaurarlo en el respaldo.')) return;
+        await deleteRecord(rec.id);
+        renderHistorial();
+        showToast('Registro movido al respaldo');
+      });
+    });
+  }
+}
+
+async function renderRespaldo(){
+  const box = document.getElementById('respaldo-list');
+  box.innerHTML = '<div class="empty-state"><p>Cargando…</p></div>';
+  const deleted = await listDeletedRecords();
+  if(deleted.length===0){
+    box.innerHTML = '<div class="card"><div class="empty-state"><h3>No hay registros en el respaldo</h3><p>Los registros que elimines del historial aparecerán aquí y podrás restaurarlos cuando quieras.</p></div></div>';
     return;
   }
   box.innerHTML = '';
-  filtered.forEach(rec=>{
-    const card = document.createElement('div');
-    card.className = 'card rec-card';
+  deleted.forEach(rec=>{
+    const rowCard = document.createElement('div');
+    rowCard.className = 'card rec-card';
     const empresa = (rec.header && rec.header.empresa) || 'Sin nombre de empresa';
     const fecha = (rec.header && rec.header.fecha) || '—';
-    card.innerHTML = `
+    rowCard.innerHTML = `
       <div class="rec-info">
         <h4>${escapeHtml(empresa)}</h4>
-        <p>Fecha: ${fecha} · Actualizado ${new Date(rec.updatedAt||rec.savedAt).toLocaleString('es-CO')}</p>
+        <p>Fecha: ${fecha} · Eliminado ${new Date(rec.deletedAt||Date.now()).toLocaleString('es-CO')}</p>
       </div>
       <div class="rec-actions">
-        <button class="btn" data-load="${rec.id}">Abrir</button>
-        <button class="btn btn-primary" data-export="${rec.id}">PDF</button>
-        <button class="btn btn-danger" data-del="${rec.id}">Eliminar</button>
+        <button class="btn btn-primary" data-bakrestore="${rec.id}">↩ Restaurar</button>
       </div>
     `;
-    box.appendChild(card);
-    card.querySelector('[data-load]').addEventListener('click', ()=>{
-      loadRecordIntoForm(rec);
-      switchView('nuevo');
-      showToast('Registro cargado');
-    });
-    card.querySelector('[data-export]').addEventListener('click', ()=> exportRecordToPDF(rec));
-    card.querySelector('[data-del]').addEventListener('click', async ()=>{
-      await deleteRecord(rec.id);
-      renderHistorial();
-      showToast('Registro eliminado');
+    box.appendChild(rowCard);
+    rowCard.querySelector('[data-bakrestore]').addEventListener('click', async ()=>{
+      const ok = await restoreDeletedRecord(rec.id);
+      renderRespaldo();
+      showToast(ok ? 'Registro restaurado al historial' : 'No se pudo restaurar el registro');
     });
   });
 }
-
 
 function buildPDF(rec){
   const { jsPDF } = window.jspdf;
@@ -1253,6 +1454,7 @@ function switchView(name){
   }
   if(name==='config'){ renderHeaderConfig(); renderLogoConfig(); renderSectionsConfig(); }
   if(name==='historial'){ renderHistorial(); }
+  if(name==='respaldo'){ renderRespaldo(); }
   currentView = name;
 }
 

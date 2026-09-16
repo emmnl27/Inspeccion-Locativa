@@ -216,6 +216,27 @@ body{
   border:1px solid var(--line); border-radius:5px; cursor:pointer; background:#fff;
 }
 .cfg-restore-btn:hover{border-color:var(--teal); background:var(--teal-soft);}
+.cfg-add{flex-wrap:wrap;}
+.add-hdr-type{
+  font-family:inherit; font-size:13px; color:var(--ink);
+  border:1px solid var(--line); border-radius:6px;
+  padding:7px 8px; background:#FBFBF9; flex-shrink:0;
+}
+.add-hdr-type:focus{outline:2px solid var(--teal); outline-offset:1px;}
+.add-hdr-full{
+  display:flex; align-items:center; gap:6px;
+  font-size:12px; color:var(--ink-soft); white-space:nowrap; flex-shrink:0;
+}
+.add-hdr-full input{width:15px; height:15px; accent-color:var(--teal);}
+.cfg-restore-row .cfg-restore-type{
+  flex:0 0 auto; font-family:'Courier New', monospace; font-size:10.5px;
+  color:var(--ink-soft); background:#F0F2EE; border-radius:4px; padding:1px 6px;
+}
+.cfg-restore-row .del-bak-info{flex:1; min-width:0;}
+.cfg-restore-row .del-bak-meta{
+  flex:0 0 auto; display:block; font-size:11px; margin-top:2px; color:var(--ink-soft);
+}
+.del-bak-row{flex-wrap:wrap;}
 .hdr-default{
   font-family:inherit; font-size:12.5px; color:var(--ink);
   border:1px solid var(--line); border-radius:6px;
@@ -364,7 +385,7 @@ body{
   .anexos-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));}
   .card{padding:16px;}
   .page-head h1{font-size:19px;}
-  .cfg-add{flex-direction:stretch;}
+  .cfg-add{flex-wrap:wrap;}
   .cfg-add input{min-width:0;}
   .cfg-add .btn{flex-shrink:0;}
 }
