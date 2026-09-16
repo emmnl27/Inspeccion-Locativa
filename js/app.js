@@ -582,7 +582,12 @@ async function loadDraft(){
 
 function exportBackup(){
   Promise.all([listRecords(), listDeletedRecords()]).then(([recs, deleted])=>{
-    const data = { app:'inspeccion_locativa', version:2, exportedAt: Date.now(), records: recs, deletedRecords: deleted };
+    const data = {
+      app:'inspeccion_locativa', version:3, exportedAt: Date.now(),
+      config: JSON.parse(JSON.stringify(config)),
+      records: recs,
+      deletedRecords: deleted
+    };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -592,7 +597,7 @@ function exportBackup(){
     a.remove();
     URL.revokeObjectURL(a.href);
     const total = recs.length + deleted.length;
-    showToast(total ? `Respaldo con ${total} registros (${deleted.length} eliminados) exportado` : 'No hay registros para respaldar');
+    showToast(total ? `Respaldo completo: configuración + ${total} registros (${deleted.length} eliminados)` : 'Configuración exportada');
   });
 }
 function importBackup(){
@@ -604,9 +609,18 @@ function importBackup(){
     if(!f) return;
     try{
       const data = JSON.parse(await f.text());
-      if(!data || !Array.isArray(data.records)) throw new Error('formato');
+      if(!data) throw new Error('formato');
+
+      let hasConfig = false;
+      if(data.config && typeof data.config === 'object'){
+        Object.assign(config, data.config);
+        await saveConfigToStorage();
+        hasConfig = true;
+      }
+
       let n = 0;
-      for(const r of data.records){
+      const recordsArr = Array.isArray(data.records) ? data.records : [];
+      for(const r of recordsArr){
         if(r && r.id){
           await saveRecordToStorage(Object.assign({}, r, {
             header: (r.header && typeof r.header === 'object') ? r.header : {},
@@ -634,8 +648,13 @@ function importBackup(){
           dn++;
         }
       }
-      showToast(n || dn ? `Importados: ${n} registros, ${dn} en respaldo` : 'El archivo no contiene registros');
-      renderHistorial();
+      const parts = [];
+      if(hasConfig) parts.push('configuración');
+      if(n) parts.push(`${n} registros`);
+      if(dn) parts.push(`${dn} en respaldo`);
+      showToast(parts.length ? `Importado: ${parts.join(', ')}` : 'El archivo no contiene datos');
+      if(hasConfig) switchView('nuevo');
+      else renderHistorial();
     }catch(e){
       showToast('Archivo de respaldo inválido');
     }
