@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inspección Locativa SST</title>
+<script src="js/vendor/jspdf.umd.min.js"></script>
+<script src="js/vendor/jspdf.plugin.autotable.min.js"></script>
+<link rel="stylesheet" href="styles/styles.css">
+</head>
+<body>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">SST · 001</span>
+      <span class="brand-name">Inspección Locativa</span>
+    </div>
+    <div class="nav">
+      <div class="nav-item active" data-view="nuevo"><span class="nav-num">01</span> Nuevo registro</div>
+      <div class="nav-item" data-view="config"><span class="nav-num">02</span> Configuración</div>
+      <div class="nav-item" data-view="historial"><span class="nav-num">03</span> Historial</div>
+    </div>
+  </div>
+
+  <div class="main">
+
+    
+    <div class="view active" id="view-nuevo">
+      <div class="page-head">
+        <h1>Nuevo registro de inspección</h1>
+        <p>Diligencia los datos de la inspección. Solo se muestran los campos y elementos activados en Configuración.</p>
+      </div>
+
+      <div class="card" id="header-card"></div>
+      <div id="sections-container"></div>
+
+      <div class="toolbar">
+        <div class="status">
+          <div class="progress" title="Avance total de la inspección"><div class="progress-fill" id="progress-bar"></div></div>
+          <span id="status-text"></span>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn" id="btn-clear">Limpiar</button>
+          <button class="btn" id="btn-save">Guardar registro</button>
+          <button class="btn btn-primary" id="btn-pdf">Exportar PDF</button>
+        </div>
+      </div>
+    </div>
+
+    
+    <div class="view" id="view-config">
+      <div class="page-head">
+        <h1>Configuración</h1>
+        <p>Elige qué datos del encabezado y qué elementos de la lista de chequeo aparecerán al crear un nuevo registro.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="badge">Encabezado</span> Datos generales de la inspección</div>
+        <p class="cfg-hint">Define un valor predeterminado por campo (queda precargado al abrir "Nuevo registro", pero se puede editar). Fecha y hora usan el momento actual si los dejas vacíos.</p>
+        <div id="header-config"></div>
+      </div>
+
+      <div class="card" id="logo-config"></div>
+
+      <div id="sections-config"></div>
+
+      <div class="toolbar">
+        <div class="status" id="config-status"></div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn" id="btn-cfg-all">Marcar todo</button>
+          <button class="btn" id="btn-cfg-none">Desmarcar todo</button>
+          <button class="btn btn-primary" id="btn-cfg-save">Guardar configuración</button>
+        </div>
+      </div>
+    </div>
+
+    
+    <div class="view" id="view-historial">
+      <div class="page-head">
+        <h1>Historial</h1>
+        <p>Registros guardados en este navegador. Puedes buscarlos, reexportarlos a PDF o respaldarlos.</p>
+      </div>
+      <div class="card">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <input type="search" id="hist-search" class="hdr-default" placeholder="Buscar por empresa, fecha, inspector…" style="flex:1; min-width:200px;" autocomplete="off">
+          <button class="btn" id="btn-backup-export">Exportar respaldo</button>
+          <button class="btn" id="btn-backup-import">Importar respaldo</button>
+        </div>
+      </div>
+      <div id="historial-list"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
